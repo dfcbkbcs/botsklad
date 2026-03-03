@@ -3,6 +3,8 @@ import logging
 from datetime import datetime
 import os
 
+from openpyxl import Workbook
+
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -467,56 +469,57 @@ async def need(update, context):
 # EXCEL
 
 async def excel(update, context):
+conn = db()
+cursor = conn.cursor()
 
-    conn = db()
+# Получаем остатки
+cursor.execute("SELECT name, qty FROM items")
+items = cursor.fetchall()
 
-    items = pd.read_sql(
-        "SELECT name,qty FROM items",
-        conn
-    )
+# Получаем историю
+cursor.execute("""
+SELECT items.name,
+history.qty,
+history.user,
+history.date
+FROM history
+JOIN items ON items.id = history.item_id
+""")
+history_data = cursor.fetchall()
 
-    history_df = pd.read_sql(
-        """
-        SELECT items.name,
-               history.qty,
-               history.user,
-               history.date
-        FROM history
-        JOIN items ON items.id=history.item_id
-        """,
-        conn
-    )
+# Получаем список "Нужно заказать"
+cursor.execute("SELECT name, qty FROM items WHERE qty <= minimum")
+need_data = cursor.fetchall()
 
-    need_df = pd.read_sql(
-        "SELECT name,qty FROM items WHERE qty<=minimum",
-        conn
-    )
+conn.close()
 
-    conn.close()
+wb = Workbook()
 
-    with pd.ExcelWriter("report.xlsx") as writer:
+# Лист Остаток
+ws1 = wb.active
+ws1.title = "Остаток"
+ws1.append(["Название позиции", "Количество"])
+for row in items:
+ws1.append(row)
 
-        items.to_excel(
-            writer,
-            sheet_name="Остаток",
-            index=False
-        )
+# Лист История
+ws2 = wb.create_sheet("История")
+ws2.append(["Название позиции", "Количество", "Кто", "Когда"])
+for row in history_data:
+ws2.append(row)
 
-        history_df.to_excel(
-            writer,
-            sheet_name="История",
-            index=False
-        )
+# Лист Нужно заказать
+ws3 = wb.create_sheet("Нужно заказать")
+ws3.append(["Название позиции", "Остаток"])
+for row in need_data:
+ws3.append(row)
 
-        need_df.to_excel(
-            writer,
-            sheet_name="Нужно заказать",
-            index=False
-        )
+file_path = "report.xlsx"
+wb.save(file_path)
 
-    await update.message.reply_document(
-        open("report.xlsx", "rb")
-    )
+await update.message.reply_document(
+open(file_path, "rb")
+)
 
 # ROUTERS
 
