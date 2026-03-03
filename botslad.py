@@ -1,6 +1,7 @@
 import sqlite3
 import logging
 from datetime import datetime
+import os
 import pandas as pd
 
 from telegram import (
@@ -20,7 +21,7 @@ from telegram.ext import (
     ConversationHandler,
 )
 
-TOKEN = "8717788884:AAHWH_hk2pFcb0izmvi9OEpMkJPJmEec2ag"
+TOKEN = os.getenv("TOKEN")
 OWNER_ID = 512147377
 DB_NAME = "warehouse.db"
 
