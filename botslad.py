@@ -2,7 +2,6 @@ import sqlite3
 import logging
 from datetime import datetime
 import os
-import pandas as pd
 
 from telegram import (
     Update,
