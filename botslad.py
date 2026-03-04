@@ -159,7 +159,7 @@ async def start(update: Update, context):
 async def categories(update: Update, context):
     conn = db()
     c = conn.cursor()
-    c.execute("SELECT id,name FROM categories ORDER BY name")
+    c.execute("SELECT id,name FROM categories ORDER BY id")
     rows = c.fetchall()
     conn.close()
 
