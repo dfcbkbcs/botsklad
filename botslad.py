@@ -56,7 +56,8 @@ def init_db():
     c.execute("""
     CREATE TABLE IF NOT EXISTS categories(
         id SERIAL PRIMARY KEY,
-        name TEXT UNIQUE
+        name TEXT UNIQUE,
+        sort_order INTEGER
     )
     """)
 
@@ -88,11 +89,20 @@ def init_db():
     )
     """)
 
-    for cat in ["Расходники", "Материал", "Инструмент", "Металл"]:
-        c.execute(
-            "INSERT INTO categories(name) VALUES(%s) ON CONFLICT (name) DO NOTHING",
-            (cat,)
-        )
+    # Стандартные категории с фиксированным порядком
+    default_categories = [
+        ("Расходники", 1),
+        ("Материал", 2),
+        ("Инструмент", 3),
+        ("Металл", 4),
+    ]
+
+    for name, order in default_categories:
+        c.execute("""
+            INSERT INTO categories(name, sort_order)
+            VALUES(%s,%s)
+            ON CONFLICT (name) DO NOTHING
+        """, (name, order))
 
     conn.commit()
     conn.close()
@@ -154,12 +164,18 @@ async def start(update: Update, context):
     )
 
 
-# CATEGORIES
+# CATEGORIES (СОРТИРОВКА ПО sort_order)
 
 async def categories(update: Update, context):
     conn = db()
     c = conn.cursor()
-    c.execute("SELECT id,name FROM categories ORDER BY id")
+
+    c.execute("""
+        SELECT id,name
+        FROM categories
+        ORDER BY sort_order NULLS LAST, id
+    """)
+
     rows = c.fetchall()
     conn.close()
 
@@ -173,7 +189,36 @@ async def categories(update: Update, context):
     )
 
 
-# NEED SECTION (ОБНОВЛЕНО)
+# ДОБАВЛЕНИЕ КАТЕГОРИИ (ставится в конец)
+
+async def add_category_start(update, context):
+    await update.callback_query.answer()
+    await update.callback_query.message.reply_text("Введите название категории:")
+    return ADD_CATEGORY
+
+
+async def add_category_save(update, context):
+    conn = db()
+    c = conn.cursor()
+
+    # Узнаём максимальный порядок
+    c.execute("SELECT COALESCE(MAX(sort_order),0) FROM categories")
+    max_order = c.fetchone()[0] + 1
+
+    c.execute("""
+        INSERT INTO categories(name, sort_order)
+        VALUES(%s,%s)
+        ON CONFLICT (name) DO NOTHING
+    """, (update.message.text, max_order))
+
+    conn.commit()
+    conn.close()
+
+    await update.message.reply_text("Категория добавлена")
+    return ConversationHandler.END
+
+
+# NEED
 
 async def need(update: Update, context):
     conn = db()
@@ -295,6 +340,9 @@ async def msg_router(update, context):
 async def cb_router(update, context):
     data = update.callback_query.data
 
+    if data == "add_category":
+        return await add_category_start(update, context)
+
     if data == "add_purchase":
         return await add_purchase_start(update, context)
 
@@ -307,6 +355,16 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+
+    app.add_handler(
+        ConversationHandler(
+            entry_points=[CallbackQueryHandler(add_category_start, pattern="add_category")],
+            states={
+                ADD_CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_category_save)]
+            },
+            fallbacks=[]
+        )
+    )
 
     app.add_handler(
         ConversationHandler(
