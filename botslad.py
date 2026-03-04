@@ -467,59 +467,51 @@ async def need(update, context):
     )
 
 # EXCEL
-
 async def excel(update, context):
-conn = db()
-cursor = conn.cursor()
+    conn = db()
+    cursor = conn.cursor()
 
-# Получаем остатки
-cursor.execute("SELECT name, qty FROM items")
-items = cursor.fetchall()
+    cursor.execute("SELECT name, qty FROM items")
+    items = cursor.fetchall()
 
-# Получаем историю
-cursor.execute("""
-SELECT items.name,
-history.qty,
-history.user,
-history.date
-FROM history
-JOIN items ON items.id = history.item_id
-""")
-history_data = cursor.fetchall()
+    cursor.execute("""
+        SELECT items.name,
+               history.qty,
+               history.user,
+               history.date
+        FROM history
+        JOIN items ON items.id = history.item_id
+    """)
+    history_data = cursor.fetchall()
 
-# Получаем список "Нужно заказать"
-cursor.execute("SELECT name, qty FROM items WHERE qty <= minimum")
-need_data = cursor.fetchall()
+    cursor.execute("SELECT name, qty FROM items WHERE qty <= minimum")
+    need_data = cursor.fetchall()
 
-conn.close()
+    conn.close()
 
-wb = Workbook()
+    wb = Workbook()
 
-# Лист Остаток
-ws1 = wb.active
-ws1.title = "Остаток"
-ws1.append(["Название позиции", "Количество"])
-for row in items:
-ws1.append(row)
+    ws1 = wb.active
+    ws1.title = "Остаток"
+    ws1.append(["Название позиции", "Количество"])
+    for row in items:
+        ws1.append(row)
 
-# Лист История
-ws2 = wb.create_sheet("История")
-ws2.append(["Название позиции", "Количество", "Кто", "Когда"])
-for row in history_data:
-ws2.append(row)
+    ws2 = wb.create_sheet("История")
+    ws2.append(["Название позиции", "Количество", "Кто", "Когда"])
+    for row in history_data:
+        ws2.append(row)
 
-# Лист Нужно заказать
-ws3 = wb.create_sheet("Нужно заказать")
-ws3.append(["Название позиции", "Остаток"])
-for row in need_data:
-ws3.append(row)
+    ws3 = wb.create_sheet("Нужно заказать")
+    ws3.append(["Название позиции", "Остаток"])
+    for row in need_data:
+        ws3.append(row)
 
-file_path = "report.xlsx"
-wb.save(file_path)
+    file_path = "report.xlsx"
+    wb.save(file_path)
 
-await update.message.reply_document(
-open(file_path, "rb")
-)
+    with open(file_path, "rb") as f:
+        await update.message.reply_document(f)
 
 # ROUTERS
 
