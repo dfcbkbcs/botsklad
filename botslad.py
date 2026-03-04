@@ -1,4 +1,3 @@
-import sqlite3
 import logging
 from datetime import datetime
 import os
@@ -18,26 +17,23 @@ from telegram.ext import (
     CommandHandler,
     MessageHandler,
     CallbackQueryHandler,
-    ContextTypes,
     filters,
     ConversationHandler,
 )
 
 TOKEN = os.getenv("TOKEN")
 OWNER_ID = 512147377
-DB_NAME = "warehouse.db"
 
 logging.basicConfig(level=logging.INFO)
 
 # STATES
-
 ADD_CATEGORY = 1
-
 ADD_ITEM_NAME = 10
 ADD_ITEM_QTY = 11
 ADD_ITEM_MIN = 12
-
 CHANGE_QTY = 20
+ADD_PURCHASE = 30
+
 
 # DATABASE
 
@@ -46,13 +42,12 @@ def db():
 
 
 def init_db():
-
     conn = db()
     c = conn.cursor()
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS users(
-        tg_id INTEGER PRIMARY KEY,
+        tg_id BIGINT PRIMARY KEY,
         name TEXT,
         role TEXT DEFAULT 'user'
     )
@@ -60,16 +55,16 @@ def init_db():
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS categories(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         name TEXT UNIQUE
     )
     """)
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS items(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id SERIAL PRIMARY KEY,
         name TEXT,
-        category_id INTEGER,
+        category_id INTEGER REFERENCES categories(id) ON DELETE CASCADE,
         qty INTEGER DEFAULT 0,
         minimum INTEGER DEFAULT 0
     )
@@ -77,42 +72,50 @@ def init_db():
 
     c.execute("""
     CREATE TABLE IF NOT EXISTS history(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        item_id INTEGER,
+        id SERIAL PRIMARY KEY,
+        item_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
         qty INTEGER,
         action TEXT,
-        user TEXT,
+        user_name TEXT,
         date TEXT
     )
     """)
 
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS purchase(
+        id SERIAL PRIMARY KEY,
+        name TEXT
+    )
+    """)
+
     for cat in ["Расходники", "Материал", "Инструмент", "Металл"]:
-        c.execute("INSERT OR IGNORE INTO categories(name) VALUES(%s)", (cat,))
+        c.execute(
+            "INSERT INTO categories(name) VALUES(%s) ON CONFLICT (name) DO NOTHING",
+            (cat,)
+        )
 
     conn.commit()
     conn.close()
 
+
 # ROLE
 
 def is_admin(uid):
-
     if uid == OWNER_ID:
         return True
 
     conn = db()
     c = conn.cursor()
-
     c.execute("SELECT role FROM users WHERE tg_id=%s", (uid,))
     r = c.fetchone()
-
     conn.close()
 
     return r and r[0] == "admin"
 
-# KEYBOARDS
+
+# KEYBOARD
 
 def main_kb(uid):
-
     kb = [
         ["📦 В наличии", "📋 Нужно заказать"],
         ["📊 Excel отчет"]
@@ -127,20 +130,20 @@ def main_kb(uid):
 # START
 
 async def start(update: Update, context):
-
     user = update.effective_user
 
     conn = db()
     c = conn.cursor()
 
-    c.execute(
-        "INSERT OR IGNORE INTO users(tg_id,name,role) VALUES(%s,%s,%s)",
-        (
-            user.id,
-            user.full_name,
-            "admin" if user.id == OWNER_ID else "user",
-        ),
-    )
+    c.execute("""
+        INSERT INTO users(tg_id,name,role)
+        VALUES(%s,%s,%s)
+        ON CONFLICT (tg_id) DO NOTHING
+    """, (
+        user.id,
+        user.full_name,
+        "admin" if user.id == OWNER_ID else "user",
+    ))
 
     conn.commit()
     conn.close()
@@ -150,343 +153,97 @@ async def start(update: Update, context):
         reply_markup=main_kb(user.id),
     )
 
+
 # CATEGORIES
 
 async def categories(update: Update, context):
-
     conn = db()
     c = conn.cursor()
-
-    c.execute("SELECT id,name FROM categories")
+    c.execute("SELECT id,name FROM categories ORDER BY name")
     rows = c.fetchall()
-
     conn.close()
 
-    kb = []
+    kb = [[InlineKeyboardButton(r[1], callback_data=f"cat_{r[0]}")] for r in rows]
 
-    for r in rows:
-        kb.append([
-            InlineKeyboardButton(
-                r[1],
-                callback_data=f"cat_{r[0]}"
-            )
-        ])
-
-    kb.append([
-        InlineKeyboardButton(
-            "➕ Добавить категорию",
-            callback_data="add_category"
-        )
-    ])
+    kb.append([InlineKeyboardButton("➕ Добавить категорию", callback_data="add_category")])
 
     await update.message.reply_text(
         "Категории:",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# ADD CATEGORY
 
-async def add_category_start(update, context):
+# NEED SECTION (ОБНОВЛЕНО)
 
-    await update.callback_query.answer()
-
-    await update.callback_query.message.reply_text(
-        "Введите название категории:"
-    )
-
-    return ADD_CATEGORY
-
-
-async def add_category_save(update, context):
-
+async def need(update: Update, context):
     conn = db()
     c = conn.cursor()
 
-    c.execute(
-        "INSERT OR IGNORE INTO categories(name) VALUES(%s)",
-        (update.message.text,),
-    )
+    c.execute("SELECT name,qty FROM items WHERE qty<=minimum ORDER BY name")
+    low_items = c.fetchall()
 
-    conn.commit()
+    c.execute("SELECT id,name FROM purchase ORDER BY id DESC")
+    purchase_items = c.fetchall()
+
     conn.close()
 
-    await update.message.reply_text("Категория добавлена")
+    text = "⚠ Нужно пополнить:\n"
+    text += "\n".join(f"{r[0]} ({r[1]})" for r in low_items) or "Нет позиций"
 
-    return ConversationHandler.END
-
-# SHOW ITEMS
-
-async def show_items(update, context):
-
-    query = update.callback_query
-    await query.answer()
-
-    cat = int(query.data.split("_")[1])
-
-    context.user_data["cat"] = cat
-
-    conn = db()
-    c = conn.cursor()
-
-    c.execute(
-        "SELECT id,name,qty,minimum FROM items WHERE category_id=?",
-        (cat,)
-    )
-
-    rows = c.fetchall()
-    conn.close()
-
-    kb = []
-
-    for r in rows:
-
-        status = "⚠" if r[2] <= r[3] else "✅"
-
-        kb.append([
-            InlineKeyboardButton(
-                f"{r[1]} ({r[2]}) {status}",
-                callback_data=f"item_{r[0]}"
-            )
-        ])
-
-    kb.append([
-        InlineKeyboardButton(
-            "➕ Добавить позицию",
-            callback_data="add_item"
-        )
-    ])
-
-    await query.message.reply_text(
-        "Позиции:",
-        reply_markup=InlineKeyboardMarkup(kb)
-    )
-
-# ADD ITEM
-
-async def add_item_start(update, context):
-
-    await update.callback_query.answer()
-
-    await update.callback_query.message.reply_text(
-        "Название позиции:"
-    )
-
-    return ADD_ITEM_NAME
-
-
-async def add_item_name(update, context):
-
-    context.user_data["name"] = update.message.text
-
-    await update.message.reply_text("Количество:")
-
-    return ADD_ITEM_QTY
-
-
-async def add_item_qty(update, context):
-
-    context.user_data["qty"] = int(update.message.text)
-
-    await update.message.reply_text("Минимум:")
-
-    return ADD_ITEM_MIN
-
-
-async def add_item_min(update, context):
-
-    conn = db()
-    c = conn.cursor()
-
-    c.execute(
-        "INSERT INTO items(name,category_id,qty,minimum) VALUES(%s,%s,%s,%s)",
-        (
-            context.user_data["name"],
-            context.user_data["cat"],
-            context.user_data["qty"],
-            int(update.message.text),
-        ),
-    )
-
-    conn.commit()
-    conn.close()
-
-    await update.message.reply_text("Позиция добавлена")
-
-    return ConversationHandler.END
-
-# ITEM MENU
-
-async def item_menu(update, context):
-
-    query = update.callback_query
-    await query.answer()
-
-    context.user_data["item"] = int(query.data.split("_")[1])
+    text += "\n\n🛒 Список закупки:\n"
+    text += "\n".join(r[1] for r in purchase_items) or "Пусто"
 
     kb = [
-
-        [
-            InlineKeyboardButton("➕ Добавить", callback_data="plus"),
-            InlineKeyboardButton("➖ Взять", callback_data="minus"),
-        ],
-
-        [
-            InlineKeyboardButton("📜 История", callback_data="history")
-        ]
-
+        [InlineKeyboardButton("➕ Добавить в закупку", callback_data="add_purchase")]
     ]
 
-    await query.message.reply_text(
-        "Выберите действие:",
+    await update.message.reply_text(
+        text,
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
-# CHANGE
 
-async def plus(update, context):
+# ADD PURCHASE
 
+async def add_purchase_start(update, context):
     await update.callback_query.answer()
-
-    context.user_data["mode"] = "plus"
-
-    await update.callback_query.message.reply_text(
-        "Введите количество:"
-    )
-
-    return CHANGE_QTY
+    await update.callback_query.message.reply_text("Введите название позиции для закупки:")
+    return ADD_PURCHASE
 
 
-async def minus(update, context):
-
-    await update.callback_query.answer()
-
-    context.user_data["mode"] = "minus"
-
-    await update.callback_query.message.reply_text(
-        "Введите количество:"
-    )
-
-    return CHANGE_QTY
-
-
-async def change_save(update, context):
-
-    qty = int(update.message.text)
-
-    if context.user_data["mode"] == "minus":
-        qty = -qty
-
+async def add_purchase_save(update, context):
     conn = db()
     c = conn.cursor()
 
-    c.execute(
-        "UPDATE items SET qty=qty+? WHERE id=%s",
-        (qty, context.user_data["item"])
-    )
-
-    c.execute(
-        """
-        INSERT INTO history(item_id,qty,action,user,date)
-        VALUES(%s,%s,%s,%s,%s)
-        """,
-        (
-            context.user_data["item"],
-            qty,
-            context.user_data["mode"],
-            update.effective_user.full_name,
-            datetime.now().strftime("%Y-%m-%d %H:%M")
-        )
-    )
-
+    c.execute("INSERT INTO purchase(name) VALUES(%s)", (update.message.text,))
     conn.commit()
     conn.close()
 
-    await update.message.reply_text("Готово")
-
+    await update.message.reply_text("Добавлено в список закупки")
     return ConversationHandler.END
 
-# HISTORY
-
-async def history(update, context):
-
-    conn = db()
-    c = conn.cursor()
-
-    c.execute("""
-        SELECT items.name,
-               history.qty,
-               history.user,
-               history.date
-        FROM history
-        JOIN items ON items.id=history.item_id
-        ORDER BY history.date DESC
-        LIMIT 50
-    """)
-
-    rows = c.fetchall()
-    conn.close()
-
-    text = "\n".join(
-        f"{r[0]}  {r[1]}  {r[2]}  {r[3]}"
-        for r in rows
-    )
-
-    if update.callback_query:
-
-        await update.callback_query.message.reply_text(
-            text or "История пуста"
-        )
-
-    else:
-
-        await update.message.reply_text(
-            text or "История пуста"
-        )
-
-# NEED
-
-async def need(update, context):
-
-    conn = db()
-    c = conn.cursor()
-
-    c.execute(
-        "SELECT name,qty FROM items WHERE qty<=minimum"
-    )
-
-    rows = c.fetchall()
-
-    conn.close()
-
-    text = "\n".join(
-        f"{r[0]} ({r[1]})"
-        for r in rows
-    )
-
-    await update.message.reply_text(
-        text or "Нет позиций"
-    )
 
 # EXCEL
+
 async def excel(update, context):
     conn = db()
-    cursor = conn.cursor()
+    c = conn.cursor()
 
-    cursor.execute("SELECT name, qty FROM items")
-    items = cursor.fetchall()
+    c.execute("SELECT name, qty FROM items")
+    items = c.fetchall()
 
-    cursor.execute("""
-        SELECT items.name,
-               history.qty,
-               history.user,
-               history.date
+    c.execute("""
+        SELECT items.name, history.qty, history.user_name, history.date
         FROM history
         JOIN items ON items.id = history.item_id
     """)
-    history_data = cursor.fetchall()
+    history_data = c.fetchall()
 
-    cursor.execute("SELECT name, qty FROM items WHERE qty <= minimum")
-    need_data = cursor.fetchall()
+    c.execute("SELECT name, qty FROM items WHERE qty <= minimum")
+    need_data = c.fetchall()
+
+    c.execute("SELECT name FROM purchase")
+    purchase_data = c.fetchall()
 
     conn.close()
 
@@ -508,16 +265,21 @@ async def excel(update, context):
     for row in need_data:
         ws3.append(row)
 
+    ws4 = wb.create_sheet("Закупка")
+    ws4.append(["Название позиции"])
+    for row in purchase_data:
+        ws4.append(row)
+
     file_path = "report.xlsx"
     wb.save(file_path)
 
     with open(file_path, "rb") as f:
         await update.message.reply_document(f)
 
+
 # ROUTERS
 
 async def msg_router(update, context):
-
     text = update.message.text
 
     if text == "📦 В наличии":
@@ -526,111 +288,40 @@ async def msg_router(update, context):
     elif text == "📋 Нужно заказать":
         await need(update, context)
 
-    elif text == "📜 Общая история":
-        await update.message.reply_text("История:")
-        await history(update, context)
-
     elif text == "📊 Excel отчет":
         await excel(update, context)
 
 
 async def cb_router(update, context):
-
     data = update.callback_query.data
 
-    if data.startswith("cat_"):
-        await show_items(update, context)
+    if data == "add_purchase":
+        return await add_purchase_start(update, context)
 
-    elif data.startswith("item_"):
-        await item_menu(update, context)
-
-    elif data == "add_category":
-        return await add_category_start(update, context)
-
-    elif data == "add_item":
-        return await add_item_start(update, context)
-
-    elif data == "plus":
-        return await plus(update, context)
-
-    elif data == "minus":
-        return await minus(update, context)
-
-    elif data == "history":
-        return await history(update, context)
 
 # MAIN
 
 def main():
-
     init_db()
 
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
 
-
-    # СНАЧАЛА ConversationHandlers
-
     app.add_handler(
         ConversationHandler(
-            entry_points=[
-                CallbackQueryHandler(add_category_start, pattern="add_category")
-            ],
+            entry_points=[CallbackQueryHandler(add_purchase_start, pattern="add_purchase")],
             states={
-                ADD_CATEGORY: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_category_save)
-                ]
+                ADD_PURCHASE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_purchase_save)]
             },
             fallbacks=[]
         )
     )
 
-
-    app.add_handler(
-        ConversationHandler(
-            entry_points=[
-                CallbackQueryHandler(add_item_start, pattern="add_item")
-            ],
-            states={
-                ADD_ITEM_NAME: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_item_name)
-                ],
-                ADD_ITEM_QTY: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_item_qty)
-                ],
-                ADD_ITEM_MIN: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, add_item_min)
-                ],
-            },
-            fallbacks=[]
-        )
-    )
-
-
-    app.add_handler(
-        ConversationHandler(
-            entry_points=[
-                CallbackQueryHandler(plus, pattern="plus"),
-                CallbackQueryHandler(minus, pattern="minus")
-            ],
-            states={
-                CHANGE_QTY: [
-                    MessageHandler(filters.TEXT & ~filters.COMMAND, change_save)
-                ]
-            },
-            fallbacks=[]
-        )
-    )
-
-
-    # ПОСЛЕ ConversationHandlers
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_router))
-
     app.add_handler(CallbackQueryHandler(cb_router))
 
     print("BOT STARTED")
-
     app.run_polling()
 
 
