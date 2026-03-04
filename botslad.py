@@ -87,7 +87,7 @@ def init_db():
     """)
 
     for cat in ["Расходники", "Материал", "Инструмент", "Металл"]:
-        c.execute("INSERT OR IGNORE INTO categories(name) VALUES(?)", (cat,))
+        c.execute("INSERT OR IGNORE INTO categories(name) VALUES(%s)", (cat,))
 
     conn.commit()
     conn.close()
@@ -102,7 +102,7 @@ def is_admin(uid):
     conn = db()
     c = conn.cursor()
 
-    c.execute("SELECT role FROM users WHERE tg_id=?", (uid,))
+    c.execute("SELECT role FROM users WHERE tg_id=%s", (uid,))
     r = c.fetchone()
 
     conn.close()
@@ -134,7 +134,7 @@ async def start(update: Update, context):
     c = conn.cursor()
 
     c.execute(
-        "INSERT OR IGNORE INTO users(tg_id,name,role) VALUES(?,?,?)",
+        "INSERT OR IGNORE INTO users(tg_id,name,role) VALUES(%s,%s,%s)",
         (
             user.id,
             user.full_name,
@@ -203,7 +203,7 @@ async def add_category_save(update, context):
     c = conn.cursor()
 
     c.execute(
-        "INSERT OR IGNORE INTO categories(name) VALUES(?)",
+        "INSERT OR IGNORE INTO categories(name) VALUES(%s)",
         (update.message.text,),
     )
 
@@ -298,7 +298,7 @@ async def add_item_min(update, context):
     c = conn.cursor()
 
     c.execute(
-        "INSERT INTO items(name,category_id,qty,minimum) VALUES(?,?,?,?)",
+        "INSERT INTO items(name,category_id,qty,minimum) VALUES(%s,%s,%s,%s)",
         (
             context.user_data["name"],
             context.user_data["cat"],
@@ -380,14 +380,14 @@ async def change_save(update, context):
     c = conn.cursor()
 
     c.execute(
-        "UPDATE items SET qty=qty+? WHERE id=?",
+        "UPDATE items SET qty=qty+? WHERE id=%s",
         (qty, context.user_data["item"])
     )
 
     c.execute(
         """
         INSERT INTO history(item_id,qty,action,user,date)
-        VALUES(?,?,?,?,?)
+        VALUES(%s,%s,%s,%s,%s)
         """,
         (
             context.user_data["item"],
