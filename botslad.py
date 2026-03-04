@@ -2,6 +2,7 @@ import sqlite3
 import logging
 from datetime import datetime
 import os
+import psycopg2
 
 from openpyxl import Workbook
 
@@ -41,7 +42,7 @@ CHANGE_QTY = 20
 # DATABASE
 
 def db():
-    return sqlite3.connect(DB_NAME)
+    return psycopg2.connect(os.getenv("DATABASE_URL"))
 
 
 def init_db():
