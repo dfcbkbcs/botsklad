@@ -45,6 +45,7 @@ def init_db():
     conn = db()
     c = conn.cursor()
 
+    # USERS
     c.execute("""
     CREATE TABLE IF NOT EXISTS users(
         tg_id BIGINT PRIMARY KEY,
@@ -53,14 +54,21 @@ def init_db():
     )
     """)
 
+    # CATEGORIES
     c.execute("""
     CREATE TABLE IF NOT EXISTS categories(
         id SERIAL PRIMARY KEY,
-        name TEXT UNIQUE,
-        sort_order INTEGER
+        name TEXT UNIQUE
     )
     """)
 
+    # если колонка sort_order отсутствует — добавить её
+    c.execute("""
+    ALTER TABLE categories
+    ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0
+    """)
+
+    # ITEMS
     c.execute("""
     CREATE TABLE IF NOT EXISTS items(
         id SERIAL PRIMARY KEY,
@@ -71,6 +79,7 @@ def init_db():
     )
     """)
 
+    # HISTORY
     c.execute("""
     CREATE TABLE IF NOT EXISTS history(
         id SERIAL PRIMARY KEY,
@@ -82,6 +91,7 @@ def init_db():
     )
     """)
 
+    # PURCHASE LIST
     c.execute("""
     CREATE TABLE IF NOT EXISTS purchase(
         id SERIAL PRIMARY KEY,
@@ -89,7 +99,7 @@ def init_db():
     )
     """)
 
-    # Стандартные категории с фиксированным порядком
+    # стандартные категории с порядком
     default_categories = [
         ("Расходники", 1),
         ("Материал", 2),
@@ -106,7 +116,6 @@ def init_db():
 
     conn.commit()
     conn.close()
-
 
 # ROLE
 
