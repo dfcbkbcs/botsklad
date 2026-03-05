@@ -472,7 +472,7 @@ async def excel(update,context):
     SELECT items.name,history.qty,history.user_name,history.date
     FROM history
     JOIN items ON items.id=history.item_id
-    WHERE history.date > NOW()-INTERVAL '30 days'
+    WHERE history.date::timestamp > NOW()-INTERVAL '30 days'
     """)
 
     hist=c.fetchall()
