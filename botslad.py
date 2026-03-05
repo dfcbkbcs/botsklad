@@ -26,7 +26,6 @@ OWNER_ID = 512147377
 
 logging.basicConfig(level=logging.INFO)
 
-# STATES
 ADD_CATEGORY = 1
 ADD_ITEM_NAME = 10
 ADD_ITEM_QTY = 11
@@ -45,7 +44,6 @@ def init_db():
     conn = db()
     c = conn.cursor()
 
-    # USERS
     c.execute("""
     CREATE TABLE IF NOT EXISTS users(
         tg_id BIGINT PRIMARY KEY,
@@ -54,7 +52,6 @@ def init_db():
     )
     """)
 
-    # CATEGORIES
     c.execute("""
     CREATE TABLE IF NOT EXISTS categories(
         id SERIAL PRIMARY KEY,
@@ -62,13 +59,11 @@ def init_db():
     )
     """)
 
-    # если колонка sort_order отсутствует — добавить её
     c.execute("""
     ALTER TABLE categories
     ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0
     """)
 
-    # ITEMS
     c.execute("""
     CREATE TABLE IF NOT EXISTS items(
         id SERIAL PRIMARY KEY,
@@ -79,7 +74,6 @@ def init_db():
     )
     """)
 
-    # HISTORY
     c.execute("""
     CREATE TABLE IF NOT EXISTS history(
         id SERIAL PRIMARY KEY,
@@ -91,7 +85,6 @@ def init_db():
     )
     """)
 
-    # PURCHASE LIST
     c.execute("""
     CREATE TABLE IF NOT EXISTS purchase(
         id SERIAL PRIMARY KEY,
@@ -99,7 +92,6 @@ def init_db():
     )
     """)
 
-    # стандартные категории с порядком
     default_categories = [
         ("Расходники", 1),
         ("Материал", 2),
@@ -109,24 +101,28 @@ def init_db():
 
     for name, order in default_categories:
         c.execute("""
-            INSERT INTO categories(name, sort_order)
-            VALUES(%s,%s)
-            ON CONFLICT (name) DO NOTHING
+        INSERT INTO categories(name, sort_order)
+        VALUES(%s,%s)
+        ON CONFLICT (name) DO NOTHING
         """, (name, order))
 
     conn.commit()
     conn.close()
 
+
 # ROLE
 
 def is_admin(uid):
+
     if uid == OWNER_ID:
         return True
 
     conn = db()
     c = conn.cursor()
+
     c.execute("SELECT role FROM users WHERE tg_id=%s", (uid,))
     r = c.fetchone()
+
     conn.close()
 
     return r and r[0] == "admin"
@@ -135,6 +131,7 @@ def is_admin(uid):
 # KEYBOARD
 
 def main_kb(uid):
+
     kb = [
         ["📦 В наличии", "📋 Нужно заказать"],
         ["📊 Excel отчет"]
@@ -149,15 +146,16 @@ def main_kb(uid):
 # START
 
 async def start(update: Update, context):
+
     user = update.effective_user
 
     conn = db()
     c = conn.cursor()
 
     c.execute("""
-        INSERT INTO users(tg_id,name,role)
-        VALUES(%s,%s,%s)
-        ON CONFLICT (tg_id) DO NOTHING
+    INSERT INTO users(tg_id,name,role)
+    VALUES(%s,%s,%s)
+    ON CONFLICT (tg_id) DO NOTHING
     """, (
         user.id,
         user.full_name,
@@ -173,22 +171,30 @@ async def start(update: Update, context):
     )
 
 
-# CATEGORIES (СОРТИРОВКА ПО sort_order)
+# КАТЕГОРИИ
 
 async def categories(update: Update, context):
+
     conn = db()
     c = conn.cursor()
 
     c.execute("""
-        SELECT id,name
-        FROM categories
-        ORDER BY sort_order NULLS LAST, id
+    SELECT id,name
+    FROM categories
+    ORDER BY sort_order NULLS LAST, id
     """)
 
     rows = c.fetchall()
     conn.close()
 
-    kb = [[InlineKeyboardButton(r[1], callback_data=f"cat_{r[0]}")] for r in rows]
+    kb = []
+
+    for r in rows:
+
+        kb.append([
+            InlineKeyboardButton(r[1], callback_data=f"cat_{r[0]}"),
+            InlineKeyboardButton("❌", callback_data=f"del_cat_{r[0]}")
+        ])
 
     kb.append([InlineKeyboardButton("➕ Добавить категорию", callback_data="add_category")])
 
@@ -198,38 +204,127 @@ async def categories(update: Update, context):
     )
 
 
-# ДОБАВЛЕНИЕ КАТЕГОРИИ (ставится в конец)
+# ПОЗИЦИИ В КАТЕГОРИИ
+
+async def show_items(update, context):
+
+    query = update.callback_query
+    await query.answer()
+
+    cat = int(query.data.split("_")[1])
+    context.user_data["cat"] = cat
+
+    conn = db()
+    c = conn.cursor()
+
+    c.execute(
+        "SELECT id,name,qty,minimum FROM items WHERE category_id=%s ORDER BY name",
+        (cat,)
+    )
+
+    rows = c.fetchall()
+    conn.close()
+
+    kb = []
+
+    for r in rows:
+
+        status = "⚠️" if r[2] <= r[3] else "✅"
+
+        kb.append([
+            InlineKeyboardButton(
+                f"{r[1]} ({r[2]}) {status}",
+                callback_data=f"item_{r[0]}"
+            ),
+            InlineKeyboardButton(
+                "❌",
+                callback_data=f"del_item_{r[0]}"
+            )
+        ])
+
+    kb.append([InlineKeyboardButton("➕ Добавить позицию", callback_data="add_item")])
+
+    kb.append([InlineKeyboardButton("⬅ Назад", callback_data="back_categories")])
+
+    await query.message.reply_text(
+        "Позиции:",
+        reply_markup=InlineKeyboardMarkup(kb)
+    )
+
+
+# ДОБАВЛЕНИЕ КАТЕГОРИИ
 
 async def add_category_start(update, context):
+
     await update.callback_query.answer()
     await update.callback_query.message.reply_text("Введите название категории:")
     return ADD_CATEGORY
 
 
 async def add_category_save(update, context):
+
     conn = db()
     c = conn.cursor()
 
-    # Узнаём максимальный порядок
     c.execute("SELECT COALESCE(MAX(sort_order),0) FROM categories")
     max_order = c.fetchone()[0] + 1
 
     c.execute("""
-        INSERT INTO categories(name, sort_order)
-        VALUES(%s,%s)
-        ON CONFLICT (name) DO NOTHING
+    INSERT INTO categories(name, sort_order)
+    VALUES(%s,%s)
+    ON CONFLICT (name) DO NOTHING
     """, (update.message.text, max_order))
 
     conn.commit()
     conn.close()
 
     await update.message.reply_text("Категория добавлена")
+
     return ConversationHandler.END
+
+
+# УДАЛЕНИЕ КАТЕГОРИИ
+
+async def delete_category(update, context):
+
+    query = update.callback_query
+    await query.answer()
+
+    cat_id = int(query.data.split("_")[2])
+
+    conn = db()
+    c = conn.cursor()
+
+    c.execute("DELETE FROM categories WHERE id=%s", (cat_id,))
+    conn.commit()
+    conn.close()
+
+    await query.message.reply_text("Категория удалена")
+
+
+# УДАЛЕНИЕ ПОЗИЦИИ
+
+async def delete_item(update, context):
+
+    query = update.callback_query
+    await query.answer()
+
+    item_id = int(query.data.split("_")[2])
+
+    conn = db()
+    c = conn.cursor()
+
+    c.execute("DELETE FROM items WHERE id=%s", (item_id,))
+    conn.commit()
+    conn.close()
+
+    await query.message.reply_text("Позиция удалена")
 
 
 # NEED
 
 async def need(update: Update, context):
+
     conn = db()
     c = conn.cursor()
 
@@ -257,29 +352,34 @@ async def need(update: Update, context):
     )
 
 
-# ADD PURCHASE
+# ДОБАВИТЬ В ЗАКУПКУ
 
 async def add_purchase_start(update, context):
+
     await update.callback_query.answer()
-    await update.callback_query.message.reply_text("Введите название позиции для закупки:")
+    await update.callback_query.message.reply_text("Введите название позиции:")
     return ADD_PURCHASE
 
 
 async def add_purchase_save(update, context):
+
     conn = db()
     c = conn.cursor()
 
     c.execute("INSERT INTO purchase(name) VALUES(%s)", (update.message.text,))
+
     conn.commit()
     conn.close()
 
-    await update.message.reply_text("Добавлено в список закупки")
+    await update.message.reply_text("Добавлено в закупку")
+
     return ConversationHandler.END
 
 
 # EXCEL
 
 async def excel(update, context):
+
     conn = db()
     c = conn.cursor()
 
@@ -287,9 +387,9 @@ async def excel(update, context):
     items = c.fetchall()
 
     c.execute("""
-        SELECT items.name, history.qty, history.user_name, history.date
-        FROM history
-        JOIN items ON items.id = history.item_id
+    SELECT items.name, history.qty, history.user_name, history.date
+    FROM history
+    JOIN items ON items.id = history.item_id
     """)
     history_data = c.fetchall()
 
@@ -334,6 +434,7 @@ async def excel(update, context):
 # ROUTERS
 
 async def msg_router(update, context):
+
     text = update.message.text
 
     if text == "📦 В наличии":
@@ -347,18 +448,32 @@ async def msg_router(update, context):
 
 
 async def cb_router(update, context):
+
     data = update.callback_query.data
 
-    if data == "add_category":
+    if data.startswith("cat_"):
+        await show_items(update, context)
+
+    elif data == "back_categories":
+        await categories(update.callback_query.message, context)
+
+    elif data.startswith("del_item_"):
+        await delete_item(update, context)
+
+    elif data.startswith("del_cat_"):
+        await delete_category(update, context)
+
+    elif data == "add_category":
         return await add_category_start(update, context)
 
-    if data == "add_purchase":
+    elif data == "add_purchase":
         return await add_purchase_start(update, context)
 
 
 # MAIN
 
 def main():
+
     init_db()
 
     app = ApplicationBuilder().token(TOKEN).build()
@@ -389,6 +504,7 @@ def main():
     app.add_handler(CallbackQueryHandler(cb_router))
 
     print("BOT STARTED")
+
     app.run_polling()
 
 
