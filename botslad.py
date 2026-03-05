@@ -1,8 +1,8 @@
 import logging
-from datetime import datetime
 import os
-import psycopg2
+from datetime import datetime
 
+import psycopg2
 from openpyxl import Workbook
 
 from telegram import (
@@ -18,7 +18,7 @@ from telegram.ext import (
     MessageHandler,
     CallbackQueryHandler,
     filters,
-    ConversationHandler,
+    ContextTypes,
 )
 
 TOKEN = os.getenv("TOKEN")
@@ -26,21 +26,15 @@ OWNER_ID = 512147377
 
 logging.basicConfig(level=logging.INFO)
 
-ADD_CATEGORY = 1
-ADD_ITEM_NAME = 10
-ADD_ITEM_QTY = 11
-ADD_ITEM_MIN = 12
-CHANGE_QTY = 20
-ADD_PURCHASE = 30
 
-
-# DATABASE
+# ---------------- DATABASE ----------------
 
 def db():
     return psycopg2.connect(os.getenv("DATABASE_URL"))
 
 
 def init_db():
+
     conn = db()
     c = conn.cursor()
 
@@ -55,13 +49,9 @@ def init_db():
     c.execute("""
     CREATE TABLE IF NOT EXISTS categories(
         id SERIAL PRIMARY KEY,
-        name TEXT UNIQUE
+        name TEXT UNIQUE,
+        sort_order INTEGER DEFAULT 0
     )
-    """)
-
-    c.execute("""
-    ALTER TABLE categories
-    ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0
     """)
 
     c.execute("""
@@ -77,7 +67,7 @@ def init_db():
     c.execute("""
     CREATE TABLE IF NOT EXISTS history(
         id SERIAL PRIMARY KEY,
-        item_id INTEGER REFERENCES items(id) ON DELETE CASCADE,
+        item_id INTEGER,
         qty INTEGER,
         action TEXT,
         user_name TEXT,
@@ -101,16 +91,16 @@ def init_db():
 
     for name, order in default_categories:
         c.execute("""
-        INSERT INTO categories(name, sort_order)
+        INSERT INTO categories(name,sort_order)
         VALUES(%s,%s)
-        ON CONFLICT (name) DO NOTHING
+        ON CONFLICT(name) DO NOTHING
         """, (name, order))
 
     conn.commit()
     conn.close()
 
 
-# ROLE
+# ---------------- ROLES ----------------
 
 def is_admin(uid):
 
@@ -128,7 +118,7 @@ def is_admin(uid):
     return r and r[0] == "admin"
 
 
-# KEYBOARD
+# ---------------- KEYBOARD ----------------
 
 def main_kb(uid):
 
@@ -143,9 +133,9 @@ def main_kb(uid):
     return ReplyKeyboardMarkup(kb, resize_keyboard=True)
 
 
-# START
+# ---------------- START ----------------
 
-async def start(update: Update, context):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user = update.effective_user
 
@@ -155,11 +145,11 @@ async def start(update: Update, context):
     c.execute("""
     INSERT INTO users(tg_id,name,role)
     VALUES(%s,%s,%s)
-    ON CONFLICT (tg_id) DO NOTHING
+    ON CONFLICT(tg_id) DO NOTHING
     """, (
         user.id,
         user.full_name,
-        "admin" if user.id == OWNER_ID else "user",
+        "admin" if user.id == OWNER_ID else "user"
     ))
 
     conn.commit()
@@ -167,11 +157,11 @@ async def start(update: Update, context):
 
     await update.message.reply_text(
         "Главное меню",
-        reply_markup=main_kb(user.id),
+        reply_markup=main_kb(user.id)
     )
 
 
-# КАТЕГОРИИ
+# ---------------- CATEGORIES ----------------
 
 async def categories(update: Update, context):
 
@@ -181,7 +171,7 @@ async def categories(update: Update, context):
     c.execute("""
     SELECT id,name
     FROM categories
-    ORDER BY sort_order NULLS LAST, id
+    ORDER BY sort_order
     """)
 
     rows = c.fetchall()
@@ -190,37 +180,38 @@ async def categories(update: Update, context):
     kb = []
 
     for r in rows:
-
         kb.append([
-            InlineKeyboardButton(r[1], callback_data=f"cat_{r[0]}"),
-            InlineKeyboardButton("❌", callback_data=f"del_cat_{r[0]}")
+            InlineKeyboardButton(r[1], callback_data=f"cat_{r[0]}")
         ])
 
-    kb.append([InlineKeyboardButton("➕ Добавить категорию", callback_data="add_category")])
+    kb.append([
+        InlineKeyboardButton("➕ Добавить категорию", callback_data="add_category")
+    ])
 
     await update.message.reply_text(
-        "Категории:",
+        "Категории",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
 
-# ПОЗИЦИИ В КАТЕГОРИИ
+# ---------------- OPEN CATEGORY ----------------
 
-async def show_items(update, context):
+async def open_category(update: Update, context):
 
     query = update.callback_query
     await query.answer()
 
-    cat = int(query.data.split("_")[1])
-    context.user_data["cat"] = cat
+    cat_id = int(query.data.split("_")[1])
 
     conn = db()
     c = conn.cursor()
 
-    c.execute(
-        "SELECT id,name,qty,minimum FROM items WHERE category_id=%s ORDER BY name",
-        (cat,)
-    )
+    c.execute("""
+    SELECT id,name,qty
+    FROM items
+    WHERE category_id=%s
+    ORDER BY name
+    """, (cat_id,))
 
     rows = c.fetchall()
     conn.close()
@@ -228,122 +219,62 @@ async def show_items(update, context):
     kb = []
 
     for r in rows:
-
-        status = "⚠️" if r[2] <= r[3] else "✅"
-
         kb.append([
             InlineKeyboardButton(
-                f"{r[1]} ({r[2]}) {status}",
+                f"{r[1]} ({r[2]})",
                 callback_data=f"item_{r[0]}"
-            ),
-            InlineKeyboardButton(
-                "❌",
-                callback_data=f"del_item_{r[0]}"
             )
         ])
 
-    kb.append([InlineKeyboardButton("➕ Добавить позицию", callback_data="add_item")])
+    kb.append([
+        InlineKeyboardButton("➕ Добавить позицию", callback_data=f"additem_{cat_id}")
+    ])
 
-    kb.append([InlineKeyboardButton("⬅ Назад", callback_data="back_categories")])
+    kb.append([
+        InlineKeyboardButton("⬅ Назад", callback_data="back_categories")
+    ])
 
-    await query.message.reply_text(
-        "Позиции:",
+    await query.message.edit_text(
+        "Позиции категории",
         reply_markup=InlineKeyboardMarkup(kb)
     )
 
 
-# ДОБАВЛЕНИЕ КАТЕГОРИИ
-
-async def add_category_start(update, context):
-
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("Введите название категории:")
-    return ADD_CATEGORY
-
-
-async def add_category_save(update, context):
-
-    conn = db()
-    c = conn.cursor()
-
-    c.execute("SELECT COALESCE(MAX(sort_order),0) FROM categories")
-    max_order = c.fetchone()[0] + 1
-
-    c.execute("""
-    INSERT INTO categories(name, sort_order)
-    VALUES(%s,%s)
-    ON CONFLICT (name) DO NOTHING
-    """, (update.message.text, max_order))
-
-    conn.commit()
-    conn.close()
-
-    await update.message.reply_text("Категория добавлена")
-
-    return ConversationHandler.END
-
-
-# УДАЛЕНИЕ КАТЕГОРИИ
-
-async def delete_category(update, context):
-
-    query = update.callback_query
-    await query.answer()
-
-    cat_id = int(query.data.split("_")[2])
-
-    conn = db()
-    c = conn.cursor()
-
-    c.execute("DELETE FROM categories WHERE id=%s", (cat_id,))
-    conn.commit()
-    conn.close()
-
-    await query.message.reply_text("Категория удалена")
-
-
-# УДАЛЕНИЕ ПОЗИЦИИ
-
-async def delete_item(update, context):
-
-    query = update.callback_query
-    await query.answer()
-
-    item_id = int(query.data.split("_")[2])
-
-    conn = db()
-    c = conn.cursor()
-
-    c.execute("DELETE FROM items WHERE id=%s", (item_id,))
-    conn.commit()
-    conn.close()
-
-    await query.message.reply_text("Позиция удалена")
-
-
-# NEED
+# ---------------- NEED ----------------
 
 async def need(update: Update, context):
 
     conn = db()
     c = conn.cursor()
 
-    c.execute("SELECT name,qty FROM items WHERE qty<=minimum ORDER BY name")
-    low_items = c.fetchall()
+    c.execute("""
+    SELECT name,qty
+    FROM items
+    WHERE qty<=minimum
+    """)
 
-    c.execute("SELECT id,name FROM purchase ORDER BY id DESC")
-    purchase_items = c.fetchall()
+    rows = c.fetchall()
+
+    text = "⚠ Нужно пополнить\n\n"
+
+    if rows:
+        for r in rows:
+            text += f"{r[0]} ({r[1]})\n"
+    else:
+        text += "Нет позиций\n"
+
+    c.execute("SELECT name FROM purchase")
+    p = c.fetchall()
+
+    text += "\n🛒 Закупка\n"
+
+    for i in p:
+        text += f"{i[0]}\n"
 
     conn.close()
 
-    text = "⚠ Нужно пополнить:\n"
-    text += "\n".join(f"{r[0]} ({r[1]})" for r in low_items) or "Нет позиций"
-
-    text += "\n\n🛒 Список закупки:\n"
-    text += "\n".join(r[1] for r in purchase_items) or "Пусто"
-
     kb = [
-        [InlineKeyboardButton("➕ Добавить в закупку", callback_data="add_purchase")]
+        [InlineKeyboardButton("➕ Добавить", callback_data="add_purchase")]
     ]
 
     await update.message.reply_text(
@@ -352,88 +283,44 @@ async def need(update: Update, context):
     )
 
 
-# ДОБАВИТЬ В ЗАКУПКУ
+# ---------------- EXCEL ----------------
 
-async def add_purchase_start(update, context):
-
-    await update.callback_query.answer()
-    await update.callback_query.message.reply_text("Введите название позиции:")
-    return ADD_PURCHASE
-
-
-async def add_purchase_save(update, context):
+async def excel(update: Update, context):
 
     conn = db()
     c = conn.cursor()
 
-    c.execute("INSERT INTO purchase(name) VALUES(%s)", (update.message.text,))
-
-    conn.commit()
-    conn.close()
-
-    await update.message.reply_text("Добавлено в закупку")
-
-    return ConversationHandler.END
-
-
-# EXCEL
-
-async def excel(update, context):
-
-    conn = db()
-    c = conn.cursor()
-
-    c.execute("SELECT name, qty FROM items")
+    c.execute("SELECT name,qty FROM items")
     items = c.fetchall()
 
-    c.execute("""
-    SELECT items.name, history.qty, history.user_name, history.date
-    FROM history
-    JOIN items ON items.id = history.item_id
-    """)
-    history_data = c.fetchall()
-
-    c.execute("SELECT name, qty FROM items WHERE qty <= minimum")
-    need_data = c.fetchall()
-
     c.execute("SELECT name FROM purchase")
-    purchase_data = c.fetchall()
-
-    conn.close()
+    purchase = c.fetchall()
 
     wb = Workbook()
 
-    ws1 = wb.active
-    ws1.title = "Остаток"
-    ws1.append(["Название позиции", "Количество"])
-    for row in items:
-        ws1.append(row)
+    ws = wb.active
+    ws.title = "Остаток"
 
-    ws2 = wb.create_sheet("История")
-    ws2.append(["Название позиции", "Количество", "Кто", "Когда"])
-    for row in history_data:
-        ws2.append(row)
+    ws.append(["Название", "Количество"])
 
-    ws3 = wb.create_sheet("Нужно заказать")
-    ws3.append(["Название позиции", "Остаток"])
-    for row in need_data:
-        ws3.append(row)
+    for i in items:
+        ws.append(i)
 
-    ws4 = wb.create_sheet("Закупка")
-    ws4.append(["Название позиции"])
-    for row in purchase_data:
-        ws4.append(row)
+    ws2 = wb.create_sheet("Закупка")
 
-    file_path = "report.xlsx"
-    wb.save(file_path)
+    for p in purchase:
+        ws2.append(p)
 
-    with open(file_path, "rb") as f:
+    file = "report.xlsx"
+    wb.save(file)
+
+    with open(file, "rb") as f:
         await update.message.reply_document(f)
 
 
-# ROUTERS
+# ---------------- ROUTER ----------------
 
-async def msg_router(update, context):
+async def msg_router(update: Update, context):
 
     text = update.message.text
 
@@ -447,30 +334,18 @@ async def msg_router(update, context):
         await excel(update, context)
 
 
-async def cb_router(update, context):
+async def cb_router(update: Update, context):
 
     data = update.callback_query.data
 
     if data.startswith("cat_"):
-        await show_items(update, context)
+        await open_category(update, context)
 
-    elif data == "back_categories":
-        await categories(update.callback_query.message, context)
-
-    elif data.startswith("del_item_"):
-        await delete_item(update, context)
-
-    elif data.startswith("del_cat_"):
-        await delete_category(update, context)
-
-    elif data == "add_category":
-        return await add_category_start(update, context)
-
-    elif data == "add_purchase":
-        return await add_purchase_start(update, context)
+    if data == "back_categories":
+        await categories(update, context)
 
 
-# MAIN
+# ---------------- MAIN ----------------
 
 def main():
 
@@ -480,27 +355,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
 
-    app.add_handler(
-        ConversationHandler(
-            entry_points=[CallbackQueryHandler(add_category_start, pattern="add_category")],
-            states={
-                ADD_CATEGORY: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_category_save)]
-            },
-            fallbacks=[]
-        )
-    )
-
-    app.add_handler(
-        ConversationHandler(
-            entry_points=[CallbackQueryHandler(add_purchase_start, pattern="add_purchase")],
-            states={
-                ADD_PURCHASE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_purchase_save)]
-            },
-            fallbacks=[]
-        )
-    )
-
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, msg_router))
+    app.add_handler(MessageHandler(filters.TEXT, msg_router))
     app.add_handler(CallbackQueryHandler(cb_router))
 
     print("BOT STARTED")
