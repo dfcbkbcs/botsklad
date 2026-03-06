@@ -378,12 +378,14 @@ async def keep_alive():
         await asyncio.sleep(600)
 
 # ---------- MAIN ----------
-async def main():
+def main():
+
     init_db()
     app = ApplicationBuilder().token(TOKEN).build()
 
     # --- handlers ---
     app.add_handler(CommandHandler("start", start))
+
     app.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler("start", start)],
@@ -391,6 +393,7 @@ async def main():
             fallbacks=[]
         )
     )
+
     app.add_handler(
         ConversationHandler(
             entry_points=[CallbackQueryHandler(add_item_start, pattern="add_item")],
@@ -402,6 +405,7 @@ async def main():
             fallbacks=[]
         )
     )
+
     app.add_handler(
         ConversationHandler(
             entry_points=[
@@ -412,6 +416,7 @@ async def main():
             fallbacks=[]
         )
     )
+
     app.add_handler(
         ConversationHandler(
             entry_points=[CallbackQueryHandler(add_purchase_start, pattern="add_purchase")],
@@ -419,14 +424,14 @@ async def main():
             fallbacks=[]
         )
     )
+
     app.add_handler(MessageHandler(filters.TEXT, msg_router))
     app.add_handler(CallbackQueryHandler(cb_router))
 
-    # --- keep alive ---
-    async with app:
-        asyncio.create_task(keep_alive())
-        await app.run_polling()
+    print("BOT STARTED")
 
-if __name__=="__main__":
-    import asyncio
-    asyncio.run(main())
+    app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
