@@ -516,7 +516,6 @@ async def excel(update, context):
 # ---------- ROUTERS ----------
 
 async def msg_router(update,context):
-
     t=update.message.text
 
     if t=="📦 В наличии":
@@ -528,25 +527,42 @@ async def msg_router(update,context):
     elif t=="📊 Excel отчет":
         await excel(update,context)
 
-        elif d=="back_main":
+async def cb_router(update, context):
+    query = update.callback_query
+    await query.answer()
+    d = query.data
 
-        await update.callback_query.answer()
+    if d.startswith("cat_"):
+        await show_items(update, context)
 
-        await update.callback_query.message.reply_text(
+    elif d.startswith("item_"):
+        await item_menu(update, context)
+
+    elif d == "add_item":
+        return await add_item_start(update, context)
+
+    elif d == "plus":
+        return await plus(update, context)
+
+    elif d == "minus":
+        return await minus(update, context)
+
+    elif d == "add_purchase":
+        return await add_purchase_start(update, context)
+
+    elif d == "back_main":
+        await query.message.reply_text(
             "Главное меню",
             reply_markup=main_kb(update.effective_user.id)
         )
 
-    elif d=="back_cat":
-
-        await update.callback_query.answer()
-
+    elif d == "back_cat":
         fake_update = Update(
             update.update_id,
-            message=update.callback_query.message
+            message=query.message
         )
+        await categories(fake_update, context)
 
-        await categories(fake_update,context)
 # ---------- CALLBACK ----------
 
 async def cb_router(update,context):
