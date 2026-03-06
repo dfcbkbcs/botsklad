@@ -653,16 +653,15 @@ def main():
 
     print("BOT STARTED")
 
-    # --- keep alive и запуск через async context ---
-    async def runner():
-        # запускаем keep_alive параллельно
+    # --- старт keep_alive через post_init ---
+    async def post_init(application):
+        # keep_alive параллельно
         asyncio.create_task(keep_alive())
-        # запускаем бота
-        await app.run_polling()
 
-    # запускаем event loop через asyncio.run
-    import asyncio
-    asyncio.run(runner())
+    app.post_init = post_init
 
+    # --- просто запускаем polling ---
+    app.run_polling()
+    
 if __name__ == "__main__":
     main()
