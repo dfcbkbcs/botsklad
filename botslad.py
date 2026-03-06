@@ -588,40 +588,38 @@ async def cb_router(update,context):
         return await add_purchase_start(update,context)
 
 # ---------- KEEP ALIVE ----------
+import asyncio
+import logging
 
 async def keep_alive():
-
     while True:
-
         logging.info("KEEP ALIVE PING")
-
-        await asyncio.sleep(600)
+        await asyncio.sleep(600)  # раз в 10 минут
 
 # ---------- MAIN ----------
-
-def main():
-
+async def main():
     init_db()
 
-    app=ApplicationBuilder().token(TOKEN).build()
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start",start))
+    # --- handlers ---
+    app.add_handler(CommandHandler("start", start))
 
     app.add_handler(
         ConversationHandler(
-            entry_points=[CommandHandler("start",start)],
-            states={ASK_NAME:[MessageHandler(filters.TEXT,save_name)]},
+            entry_points=[CommandHandler("start", start)],
+            states={ASK_NAME: [MessageHandler(filters.TEXT, save_name)]},
             fallbacks=[]
         )
     )
 
     app.add_handler(
         ConversationHandler(
-            entry_points=[CallbackQueryHandler(add_item_start,pattern="add_item")],
+            entry_points=[CallbackQueryHandler(add_item_start, pattern="add_item")],
             states={
-                ADD_ITEM_NAME:[MessageHandler(filters.TEXT,add_item_name)],
-                ADD_ITEM_QTY:[MessageHandler(filters.TEXT,add_item_qty)],
-                ADD_ITEM_MIN:[MessageHandler(filters.TEXT,add_item_min)],
+                ADD_ITEM_NAME: [MessageHandler(filters.TEXT, add_item_name)],
+                ADD_ITEM_QTY: [MessageHandler(filters.TEXT, add_item_qty)],
+                ADD_ITEM_MIN: [MessageHandler(filters.TEXT, add_item_min)],
             },
             fallbacks=[]
         )
@@ -630,11 +628,11 @@ def main():
     app.add_handler(
         ConversationHandler(
             entry_points=[
-                CallbackQueryHandler(plus,pattern="plus"),
-                CallbackQueryHandler(minus,pattern="minus")
+                CallbackQueryHandler(plus, pattern="plus"),
+                CallbackQueryHandler(minus, pattern="minus")
             ],
             states={
-                CHANGE_QTY:[MessageHandler(filters.TEXT,change_save)]
+                CHANGE_QTY: [MessageHandler(filters.TEXT, change_save)]
             },
             fallbacks=[]
         )
@@ -642,23 +640,24 @@ def main():
 
     app.add_handler(
         ConversationHandler(
-            entry_points=[CallbackQueryHandler(add_purchase_start,pattern="add_purchase")],
+            entry_points=[CallbackQueryHandler(add_purchase_start, pattern="add_purchase")],
             states={
-                ADD_PURCHASE:[MessageHandler(filters.TEXT,add_purchase_save)]
+                ADD_PURCHASE: [MessageHandler(filters.TEXT, add_purchase_save)]
             },
             fallbacks=[]
         )
     )
 
-    app.add_handler(MessageHandler(filters.TEXT,msg_router))
+    app.add_handler(MessageHandler(filters.TEXT, msg_router))
     app.add_handler(CallbackQueryHandler(cb_router))
 
     print("BOT STARTED")
 
-    loop = asyncio.get_event_loop()
-    loop.create_task(keep_alive())
-
-    app.run_polling()
-
-if __name__=="__main__":
-    main()
+    # Запускаем keep_alive параллельно с ботом
+    async with app:
+        asyncio.create_task(keep_alive())
+        await app.run_polling()
+        
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())
