@@ -581,16 +581,21 @@ async def cb_router(update,context):
         return await add_purchase_start(update,context)
 
 # ---------- KEEP ALIVE ----------
-async def keep_alive_job(context):
+def keep_alive_job(context):
+    import logging
     logging.info("KEEP ALIVE PING")
 
 # ---------- MAIN ----------
 def main():
+    # Инициализация базы данных
     init_db()
+
+    # Создаём приложение бота
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # --- handlers ---
+    # --- Handlers ---
     app.add_handler(CommandHandler("start", start))
+
     app.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler("start", start)],
@@ -598,6 +603,7 @@ def main():
             fallbacks=[]
         )
     )
+
     app.add_handler(
         ConversationHandler(
             entry_points=[CallbackQueryHandler(add_item_start, pattern="add_item")],
@@ -609,6 +615,7 @@ def main():
             fallbacks=[]
         )
     )
+
     app.add_handler(
         ConversationHandler(
             entry_points=[
@@ -621,6 +628,7 @@ def main():
             fallbacks=[]
         )
     )
+
     app.add_handler(
         ConversationHandler(
             entry_points=[CallbackQueryHandler(add_purchase_start, pattern="add_purchase")],
@@ -630,17 +638,18 @@ def main():
             fallbacks=[]
         )
     )
+
     app.add_handler(MessageHandler(filters.TEXT, msg_router))
     app.add_handler(CallbackQueryHandler(cb_router))
 
-    print("BOT STARTED")
-
-    # --- keep_alive через job_queue ---
+    # --- Keep Alive через JobQueue ---
+    # интервал 600 секунд (10 минут), первый запуск через 10 секунд
     app.job_queue.run_repeating(keep_alive_job, interval=600, first=10)
 
-    # --- polling ---
-    app.run_polling()
+    print("BOT STARTED")
 
+    # --- Запуск polling ---
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
