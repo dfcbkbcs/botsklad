@@ -461,13 +461,13 @@ async def add_purchase_save(update,context):
 
 # ---------- EXCEL ----------
 
-async def excel(update,context):
+async def excel(update, context):
 
-    conn=db()
-    c=conn.cursor()
+    conn = db()
+    c = conn.cursor()
 
     c.execute("SELECT name,qty FROM items")
-    items=c.fetchall()
+    items = c.fetchall()
 
     c.execute("""
     SELECT items.name,history.qty,history.user_name,history.date
@@ -475,52 +475,44 @@ async def excel(update,context):
     JOIN items ON items.id=history.item_id
     WHERE history.date::timestamp > NOW()-INTERVAL '30 days'
     """)
-
-    hist=c.fetchall()
+    hist = c.fetchall()
 
     c.execute("SELECT name FROM purchase")
-    buy=c.fetchall()
+    buy = c.fetchall()
 
     c.execute("""
-SELECT name,qty,minimum FROM items
-WHERE qty<=minimum
-""")
-low=c.fetchall()
+    SELECT name,qty,minimum FROM items
+    WHERE qty<=minimum
+    """)
+    low = c.fetchall()
 
     conn.close()
 
-    wb=Workbook()
+    wb = Workbook()
 
-    ws1=wb.active
-    ws1.title="Остаток"
-
-    ws1.append(["Название","Количество"])
-
+    ws1 = wb.active
+    ws1.title = "Остаток"
+    ws1.append(["Название", "Количество"])
     for r in items:
         ws1.append(r)
 
-    ws2=wb.create_sheet("История")
-    ws2.append(["Название","Количество","Кто","Когда"])
-
+    ws2 = wb.create_sheet("История")
+    ws2.append(["Название", "Количество", "Кто", "Когда"])
     for r in hist:
         ws2.append(r)
 
-ws3=wb.create_sheet("Нужно заказать")
+    ws3 = wb.create_sheet("Нужно заказать")
+    ws3.append(["Название", "Тип"])
+    for r in low:
+        ws3.append([r[0], "Минимальный остаток"])
+    for r in buy:
+        ws3.append([r[0], "Ручная закупка"])
 
-ws3.append(["Название","Тип"])
-
-for r in low:
-    ws3.append([r[0],"Минимальный остаток"])
-
-for r in buy:
-    ws3.append([r[0],"Ручная закупка"])
-
-    file="report.xlsx"
+    file = "report.xlsx"
     wb.save(file)
 
-    with open(file,"rb") as f:
+    with open(file, "rb") as f:
         await update.message.reply_document(f)
-
 # ---------- ROUTERS ----------
 
 async def msg_router(update,context):
