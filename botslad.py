@@ -597,7 +597,7 @@ async def keep_alive():
         await asyncio.sleep(600)  # раз в 10 минут
 
 # ---------- MAIN ----------
-async def main():
+def main():
     init_db()
 
     app = ApplicationBuilder().token(TOKEN).build()
@@ -653,11 +653,12 @@ async def main():
 
     print("BOT STARTED")
 
-    # Запускаем keep_alive параллельно с ботом
-    async with app:
-        asyncio.create_task(keep_alive())
-        await app.run_polling()
-        
+    # --- keep alive ---
+    loop = asyncio.get_event_loop()
+    loop.create_task(keep_alive())
+
+    # --- запуск бота ---
+    app.run_polling()  # <-- запускаем напрямую
+
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()  # <-- обычный вызов, без asyncio.run
