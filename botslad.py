@@ -460,47 +460,49 @@ async def add_purchase_save(update,context):
     return ConversationHandler.END
 
 # ---------- EXCEL ----------
-
 async def excel(update, context):
-
     conn = db()
     c = conn.cursor()
 
+    # все позиции
     c.execute("SELECT name,qty FROM items")
     items = c.fetchall()
 
+    # история за 30 дней
     c.execute("""
-    SELECT items.name,history.qty,history.user_name,history.date
-    FROM history
-    JOIN items ON items.id=history.item_id
-    WHERE history.date::timestamp > NOW()-INTERVAL '30 days'
+        SELECT items.name, history.qty, history.user_name, history.date
+        FROM history
+        JOIN items ON items.id=history.item_id
+        WHERE history.date::timestamp > NOW()-INTERVAL '30 days'
     """)
     hist = c.fetchall()
 
+    # ручная закупка
     c.execute("SELECT name FROM purchase")
     buy = c.fetchall()
 
-    c.execute("""
-    SELECT name,qty,minimum FROM items
-    WHERE qty<=minimum
-    """)
+    # позиции ниже минимума
+    c.execute("SELECT name, qty, minimum FROM items WHERE qty<=minimum")
     low = c.fetchall()
 
     conn.close()
 
     wb = Workbook()
 
+    # Остаток
     ws1 = wb.active
     ws1.title = "Остаток"
     ws1.append(["Название", "Количество"])
     for r in items:
         ws1.append(r)
 
+    # История
     ws2 = wb.create_sheet("История")
     ws2.append(["Название", "Количество", "Кто", "Когда"])
     for r in hist:
         ws2.append(r)
 
+    # Нужно заказать
     ws3 = wb.create_sheet("Нужно заказать")
     ws3.append(["Название", "Тип"])
     for r in low:
@@ -513,53 +515,44 @@ async def excel(update, context):
 
     with open(file, "rb") as f:
         await update.message.reply_document(f)
+        
 # ---------- ROUTERS ----------
+async def msg_router(update, context):
+    t = update.message.text
 
-async def msg_router(update,context):
-    t=update.message.text
-
-    if t=="📦 В наличии":
-        await categories(update,context)
-
-    elif t=="📋 Нужно заказать":
-        await need(update,context)
-
-    elif t=="📊 Excel отчет":
-        await excel(update,context)
+    if t == "📦 В наличии":
+        await categories(update, context)
+    elif t == "📋 Нужно заказать":
+        await need(update, context)
+    elif t == "📊 Excel отчет":
+        await excel(update, context)
 
 async def cb_router(update, context):
-    query = update.callback_query
-    await query.answer()
-    d = query.data
+    d = update.callback_query.data
+    await update.callback_query.answer()
 
     if d.startswith("cat_"):
         await show_items(update, context)
-
     elif d.startswith("item_"):
         await item_menu(update, context)
-
     elif d == "add_item":
         return await add_item_start(update, context)
-
     elif d == "plus":
         return await plus(update, context)
-
     elif d == "minus":
         return await minus(update, context)
-
     elif d == "add_purchase":
         return await add_purchase_start(update, context)
-
     elif d == "back_main":
-        await query.message.reply_text(
+        await update.callback_query.message.reply_text(
             "Главное меню",
             reply_markup=main_kb(update.effective_user.id)
         )
-
     elif d == "back_cat":
+        # имитация сообщения для возврата в категории
         fake_update = Update(
             update.update_id,
-            message=query.message
+            message=update.callback_query.message
         )
         await categories(fake_update, context)
 
@@ -588,23 +581,16 @@ async def cb_router(update,context):
         return await add_purchase_start(update,context)
 
 # ---------- KEEP ALIVE ----------
-import asyncio
-import logging
-
-async def keep_alive():
-    while True:
-        logging.info("KEEP ALIVE PING")
-        await asyncio.sleep(600)  # раз в 10 минут
+async def keep_alive_job(context):
+    logging.info("KEEP ALIVE PING")
 
 # ---------- MAIN ----------
 def main():
     init_db()
-
     app = ApplicationBuilder().token(TOKEN).build()
 
     # --- handlers ---
     app.add_handler(CommandHandler("start", start))
-
     app.add_handler(
         ConversationHandler(
             entry_points=[CommandHandler("start", start)],
@@ -612,7 +598,6 @@ def main():
             fallbacks=[]
         )
     )
-
     app.add_handler(
         ConversationHandler(
             entry_points=[CallbackQueryHandler(add_item_start, pattern="add_item")],
@@ -624,7 +609,6 @@ def main():
             fallbacks=[]
         )
     )
-
     app.add_handler(
         ConversationHandler(
             entry_points=[
@@ -637,7 +621,6 @@ def main():
             fallbacks=[]
         )
     )
-
     app.add_handler(
         ConversationHandler(
             entry_points=[CallbackQueryHandler(add_purchase_start, pattern="add_purchase")],
@@ -647,21 +630,17 @@ def main():
             fallbacks=[]
         )
     )
-
     app.add_handler(MessageHandler(filters.TEXT, msg_router))
     app.add_handler(CallbackQueryHandler(cb_router))
 
     print("BOT STARTED")
 
-    # --- старт keep_alive через post_init ---
-    async def post_init(application):
-        # keep_alive параллельно
-        asyncio.create_task(keep_alive())
+    # --- keep_alive через job_queue ---
+    app.job_queue.run_repeating(keep_alive_job, interval=600, first=10)
 
-    app.post_init = post_init
-
-    # --- просто запускаем polling ---
+    # --- polling ---
     app.run_polling()
-    
+
+
 if __name__ == "__main__":
     main()
