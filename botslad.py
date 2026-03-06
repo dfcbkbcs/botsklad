@@ -653,12 +653,16 @@ def main():
 
     print("BOT STARTED")
 
-    # --- keep alive ---
-    loop = asyncio.get_event_loop()
-    loop.create_task(keep_alive())
+    # --- keep alive и запуск через async context ---
+    async def runner():
+        # запускаем keep_alive параллельно
+        asyncio.create_task(keep_alive())
+        # запускаем бота
+        await app.run_polling()
 
-    # --- запуск бота ---
-    app.run_polling()  # <-- запускаем напрямую
+    # запускаем event loop через asyncio.run
+    import asyncio
+    asyncio.run(runner())
 
 if __name__ == "__main__":
-    main()  # <-- обычный вызов, без asyncio.run
+    main()
