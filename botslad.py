@@ -228,7 +228,7 @@ async def categories(update,context):
     await update.message.reply_text("Категории:", reply_markup=InlineKeyboardMarkup(kb))
 
 
-# ---------- SHOW ITEMS ----------
+# ---------- SHOW ITEMS (с поддержкой кнопки назад) ----------
 
 async def show_items(update,context):
 
@@ -240,23 +240,29 @@ async def show_items(update,context):
     cat=int(query.data.split("_")[1])
     context.user_data["cat"]=cat
 
-    conn=db()
-    c=conn.cursor()
+    await show_items_for_category(query, context, cat)
 
-    c.execute("SELECT id,name,qty,minimum FROM items WHERE category_id=%s ORDER BY name",(cat,))
-    rows=c.fetchall()
 
+async def show_items_for_category(query, context, cat_id):
+    """
+    Показывает позиции категории (для кнопки 'Назад')
+    """
+    context.user_data["cat"] = cat_id
+    context.user_data["previous_state"] = "categories"
+
+    conn = db()
+    c = conn.cursor()
+    c.execute("SELECT id,name,qty,minimum FROM items WHERE category_id=%s ORDER BY name",(cat_id,))
+    rows = c.fetchall()
     conn.close()
 
-    kb=[]
-
-    for r in rows:
-        status="⚠" if r[2]<=r[3] else "✅"
-        kb.append([InlineKeyboardButton(f"{r[1]} ({r[2]}) {status}", callback_data=f"item_{r[0]}")])
-
-    kb.append([InlineKeyboardButton("➕ Добавить позицию",callback_data="add_item")])
-    kb.append([InlineKeyboardButton("🗑 Удалить позицию",callback_data="del_item")])
-    kb.append([InlineKeyboardButton("⬅ Назад",callback_data="back_cat")])
+    kb = [
+        [InlineKeyboardButton(f"{r[1]} ({r[2]}) {'⚠' if r[2]<=r[3] else '✅'}", callback_data=f"item_{r[0]}")]
+        for r in rows
+    ]
+    kb.append([InlineKeyboardButton("➕ Добавить позицию", callback_data="add_item")])
+    kb.append([InlineKeyboardButton("🗑 Удалить позицию", callback_data="del_item")])
+    kb.append([InlineKeyboardButton("⬅ Назад", callback_data="back_cat")])
 
     await query.message.reply_text("Позиции:", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -495,7 +501,7 @@ async def excel(update,context):
         await update.message.reply_document(f)
 
 
-# ---------- BACK BUTTON ----------
+# ---------- BACK BUTTON (исправленный) ----------
 
 async def go_back(update, context):
 
@@ -514,7 +520,11 @@ async def go_back(update, context):
         await categories(update,context)
 
     elif prev=="items":
-        await categories(update,context)
+        cat_id = context.user_data.get("cat")
+        if cat_id:
+            await show_items_for_category(query, context, cat_id)
+        else:
+            await categories(update,context)
 
     else:
         await query.message.reply_text(
