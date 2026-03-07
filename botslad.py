@@ -580,7 +580,7 @@ def main():
 
     init_db()
 
-    threading.Thread(target=run_web).start()
+    threading.Thread(target=run_web, daemon=True).start()
 
     app = ApplicationBuilder().token(TOKEN).build()
 
