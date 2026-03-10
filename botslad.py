@@ -428,8 +428,6 @@ def main():
 
     app.add_handler(CallbackQueryHandler(cb_router))
 
-    app.job_queue.run_repeating(lambda ctx: None, interval=600)
-
     print("BOT STARTED")
 
     app.run_polling()
