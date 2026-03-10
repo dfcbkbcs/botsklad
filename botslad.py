@@ -346,18 +346,60 @@ async def excel(update,context):
     conn=db()
     c=conn.cursor()
 
+    # Остатки
     c.execute("SELECT name,qty FROM items")
     items=c.fetchall()
+
+    # История за 30 дней
+    c.execute("""
+    SELECT items.name,history.qty,history.user_name,history.date
+    FROM history
+    JOIN items ON items.id=history.item_id
+    WHERE history.date::timestamp > NOW()-INTERVAL '30 days'
+    """)
+    hist=c.fetchall()
+
+    # Ручной список закупки
+    c.execute("SELECT name FROM purchase")
+    buy=c.fetchall()
+
+    # Минимальный остаток
+    c.execute("SELECT name,qty,minimum FROM items WHERE qty<=minimum")
+    low=c.fetchall()
 
     conn.close()
 
     wb=Workbook()
 
-    ws=wb.active
-    ws.append(["Название","Количество"])
+    # ---------- ЛИСТ 1 ----------
+    ws1=wb.active
+    ws1.title="Остаток"
+
+    ws1.append(["Название","Количество"])
 
     for r in items:
-        ws.append(r)
+        ws1.append(r)
+
+    # ---------- ЛИСТ 2 ----------
+    ws2=wb.create_sheet("История")
+
+    ws2.append(["Название","Количество","Кто","Когда"])
+
+    for r in hist:
+        ws2.append(r)
+
+    # ---------- ЛИСТ 3 ----------
+    ws3=wb.create_sheet("Нужно заказать")
+
+    ws3.append(["Название","Тип"])
+
+    # позиции с минимальным остатком
+    for r in low:
+        ws3.append([r[0],"Минимальный остаток"])
+
+    # ручной список закупки
+    for r in buy:
+        ws3.append([r[0],"Ручная закупка"])
 
     file="report.xlsx"
     wb.save(file)
